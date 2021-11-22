@@ -16,15 +16,14 @@ type Transaction struct {
 	Task        string             `json:"task"`
 	Round       int                `json:"round"`
 	GlobalModel [][]float64        `json:"globalModel"`
-	Deltas      []LocalTransaction `json:"modelUpdates"`
+	Momentum    [][]float64        `json:"momentum"`
+	Deltas      []LocalTransaction `json:"modelUpdates"` //the deltas will be removed when the confirmed block generated
 }
 
 type LocalTransaction struct {
 	ClientID    int         `json:"clientID"`
 	Round       int         `json:"round"`
 	ModelUpdate [][]float64 `json:"modelUpdate"`
-	//client publick key
-	//client signature
 }
 
 type TransactionPool struct {
@@ -53,7 +52,7 @@ func (txp *TransactionPool) Keys() []string {
 	return keys
 }
 
-func CreateTx(task string, round int, txs []LocalTransaction, globalParam [][]float64, model_size [][]int, unlabel *python3.PyObject, model *python3.PyObject) Transaction {
+func CreateTx(task string, round int, txs []LocalTransaction, globalParam [][]float64, momentum [][]float64, beta float64, slr float64, rank int, model_size [][]int, unlabel *python3.PyObject, model *python3.PyObject) Transaction {
 	log.Println("Acquring python lock...")
 	runtime.LockOSThread()
 	gstate := python3.PyGILState_Ensure()
@@ -67,11 +66,17 @@ func CreateTx(task string, round int, txs []LocalTransaction, globalParam [][]fl
 	}
 
 	globalParamPy := gopy.ArgFromListArray_Float(globalParam)
-	globalModel := gopy.Node_agg.CallFunctionObjArgs(deltas, globalParamPy, unlabel, model, gopy.ArgFromListArray_Int(model_size))
+	momentumPy := gopy.ArgFromListArray_Float(momentum)
+
+	res := gopy.Node_run.CallFunctionObjArgs(deltas, globalParamPy, momentumPy, gopy.ArgFromFloat(beta), gopy.ArgFromFloat(slr),
+		unlabel, model, gopy.ArgFromListArray_Int(model_size), gopy.ArgFromInt(rank))
+	globalModel := python3.PyTuple_GetItem(res, 0)
+	momentumPy = python3.PyTuple_GetItem(res, 1)
 	tx := Transaction{
 		Task:        task,
 		Round:       round,
 		GlobalModel: gopy.PyListList_Float(globalModel),
+		Momentum:    gopy.PyListList_Float(momentumPy),
 		Deltas:      txs,
 	}
 
@@ -102,20 +107,15 @@ func LocalTxHash(tx LocalTransaction) string {
 	return fmt.Sprintf("%x", hashByte[:])
 }
 
-func ValidLocalTx(tx LocalTransaction, modelSize [][]int) bool {
+func ValidLocalTx(tx LocalTransaction, modelSize []int) bool {
 	//check if the shape of the local model updates is in line with the model
 	if len(tx.ModelUpdate) != len(modelSize) {
 		return false
 	}
 
 	for i := 0; i < len(modelSize); i++ {
-		para_num := 1
-		for j := 0; j < len(modelSize[i]); j++ {
-			para_num *= modelSize[i][j]
-		}
-
 		//check the parameter number in each layer
-		if para_num != len(tx.ModelUpdate[i]) {
+		if modelSize[i] != len(tx.ModelUpdate[i]) {
 			return false
 		}
 	}

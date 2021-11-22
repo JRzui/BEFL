@@ -1,6 +1,7 @@
 package run
 
 import (
+	"encoding/csv"
 	"fmt"
 	"log"
 	"net/rpc"
@@ -17,13 +18,18 @@ import (
 )
 
 //New FL task
-func NewTask(model *python3.PyObject, unlabel *python3.PyObject, size [][]int, globalParam [][]float64) network.TaskInfo {
+func NewTask(model *python3.PyObject, unlabel *python3.PyObject, size [][]int, comp_size []int, globalParam [][]float64, momentum [][]float64, rank int, beta float64, slr float64) network.TaskInfo {
 
 	task := network.TaskInfo{
 		TaskName:      client.Task,
 		Model:         model,
 		GlobalParam:   globalParam,
+		Momentum:      momentum,
 		ModelSize:     size,
+		CompModelSize: comp_size,
+		Rank:          rank,
+		Beta:          beta,
+		Slr:           slr,
 		UnlabeledData: unlabel,
 	}
 
@@ -67,15 +73,17 @@ func ProcessBlockPre(nodes []*node.Node, round int, conn *rpc.Client) {
 		nodes[i].GetTxs(conn) //get pending transactions from network
 
 		//check if enough updates are collected
-		if len(nodes[i].Blockchain.Transactions.Keys()) >= client.PartNum {
+		if len(nodes[i].Blockchain.Transactions.Keys()) >= client.M {
 			//generate candidate block
+			fmt.Println("start generating candidate block")
 			deltas := make([]chain.LocalTransaction, 0)
 			for _, key := range nodes[i].Blockchain.Transactions.Keys() {
 				deltas = append(deltas, nodes[i].Blockchain.Transactions.Transactions[key])
 			}
 
-			globalParam, _ := nodes[i].GetGlobalParam(nodes[i].Task.TaskName)
-			tx := chain.CreateTx(client.Task, round, deltas, globalParam, nodes[i].Task.ModelSize, nodes[i].Task.UnlabeledData, nodes[i].Task.Model)
+			globalParam, momentum, _ := nodes[i].GetGlobalParam(nodes[i].Task.TaskName)
+			tx := chain.CreateTx(client.Task, round, deltas, globalParam, momentum, nodes[i].Task.Beta, nodes[i].Task.Slr,
+				nodes[i].Task.Rank, nodes[i].Task.ModelSize, nodes[i].Task.UnlabeledData, nodes[i].Task.Model)
 			candBlock := chain.CreateBlock(nodes[i].Blockchain.LastBlock(), []chain.Transaction{tx})
 			//send candidate block to the network
 			var sent bool
@@ -84,6 +92,7 @@ func ProcessBlockPre(nodes []*node.Node, round int, conn *rpc.Client) {
 				fmt.Println(err)
 			}
 			if sent {
+				fmt.Println("Candidate block generated and sent to verification")
 				log.Printf("Node %d sent candidate block to the network\n", nodes[i].ID)
 			}
 			break
@@ -129,7 +138,7 @@ func NodesCommitteeUpdate(nodes []*node.Node, conn *rpc.Client) {
 }
 
 //Achieve the consensus via byzantine fault tolerance
-func ProcessBlock(bcnet *network.BlockchainNetwork, nodes []*node.Node, testData *python3.PyObject, conn *rpc.Client) {
+func ProcessBlock(bcnet *network.BlockchainNetwork, nodes []*node.Node, testData *python3.PyObject, conn *rpc.Client, w *csv.Writer) {
 	bcnet.VoteLock.Lock()
 	//the voting part
 	for _, candidate := range bcnet.CandidateBlock {
@@ -149,8 +158,8 @@ func ProcessBlock(bcnet *network.BlockchainNetwork, nodes []*node.Node, testData
 			//model test
 			globalModel := gopy.ArgFromListArray_Float(bcnet.VerifiedBlock.Transactions[0].GlobalModel)
 			acc := Test(bcnet.Task.Model, globalModel, testData, bcnet.Task.ModelSize)
+			w.Write([]string{fmt.Sprintf("%v", acc)})
 			fmt.Println("New block generated, Test accuracy: ", acc)
-			//BlockPrint(bcnet.VerifiedBlock)
 			break
 		}
 	}
@@ -173,14 +182,21 @@ func ProcessNextRound(nodes []*node.Node, conn *rpc.Client) {
 	}
 }
 
-func ProcessFL(clients []*client.Client, round int, nodes []*node.Node, conn *rpc.Client) {
-	idxs := chain.RandomArray(client.PartNum, 0, len(clients)) //get the random idxs of participants this round
+func ProcessFL(workers []*client.Client, attackers []*client.Client, round int, nodes []*node.Node, conn *rpc.Client) {
+	num_adver := int(float32(client.M) * float32(client.Cm))
+	idxs := chain.RandomArray(client.M-num_adver, 0, len(workers)) //get the random idxs of honest workers in this round
 
 	fmt.Println("FL clients start training...")
+	for _, attacker := range attackers {
+		round_model, global_r := attacker.GetGlobalModel(nodes)
+		attacker.Attack(round_model, global_r, client.K, client.B)
+		attacker.SendUpdates(nodes, round, conn)
+	}
+
 	for _, idx := range idxs {
-		round_model, global_r := clients[idx].GetGlobalModel(nodes)
-		clients[idx].Train(round_model, global_r, client.K, client.B)
-		clients[idx].SendUpdates(nodes, round, conn)
+		round_model, global_r := workers[idx].GetGlobalModel(nodes)
+		workers[idx].Train(round_model, global_r, client.K, client.B)
+		workers[idx].SendUpdates(nodes, round, conn)
 	}
 	fmt.Println("FL clients one round training complete.")
 }

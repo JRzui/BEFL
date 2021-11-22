@@ -41,8 +41,13 @@ type TaskInfo struct {
 	TaskName      string
 	Model         *python3.PyObject
 	GlobalParam   [][]float64
+	Momentum      [][]float64
 	ModelSize     [][]int
-	PartNum       int //the number of participants required in each training round
+	CompModelSize []int //the compressed model size
+	PartNum       int   //the number of participants required in each training round
+	Rank          int
+	Beta          float64
+	Slr           float64
 	UnlabeledData *python3.PyObject
 }
 

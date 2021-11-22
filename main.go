@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/csv"
 	"fmt"
 	"log"
 	"net"
@@ -24,6 +25,13 @@ func main() {
 	file, _ := os.OpenFile("log/log.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	log.SetOutput(file)
 
+	f, err := os.Create(fmt.Sprintf("%s.csv", client.Task))
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	writer := csv.NewWriter(f)
+
 	bcNet := network.NetworkInit()
 	rpc.Register(bcNet)
 	rpc.HandleHTTP()
@@ -37,7 +45,7 @@ func main() {
 	}
 
 	//Nodes generation
-	nodesNum := 100
+	nodesNum := 20
 	nodes := make([]*node.Node, 0)
 	for i := 0; i < nodesNum; i++ {
 		addr := "127.0.0.1:" + strconv.Itoa(30000+i)
@@ -56,19 +64,25 @@ func main() {
 	gopy.Interact = gopy.ImportModule("fl", "interact")
 	gopy.Init = gopy.GetFunc(gopy.Interact, "init")
 	defer gopy.Init.DecRef()
-	gopy.GetModel_params = gopy.GetFunc(gopy.Interact, "getModel_params")
-	defer gopy.GetModel_params.DecRef()
-	gopy.Client_run = gopy.GetFunc(gopy.Interact, "client_run")
-	defer gopy.Client_run.DecRef()
-	gopy.Node_agg = gopy.GetFunc(gopy.Interact, "node_agg")
-	defer gopy.Node_agg.DecRef()
+	gopy.Honest_run = gopy.GetFunc(gopy.Interact, "honest_run")
+	defer gopy.Honest_run.DecRef()
+	gopy.Attacker_run = gopy.GetFunc(gopy.Interact, "attacker_run")
+	defer gopy.Attacker_run.DecRef()
+	gopy.Node_run = gopy.GetFunc(gopy.Interact, "node_run")
+	defer gopy.Node_run.DecRef()
 	gopy.Test = gopy.GetFunc(gopy.Interact, "test")
 	defer gopy.Test.DecRef()
 
-	//FL clients generation
-	clients, test_data, unlabel, model, size, globalParam := client.CreateClients(client.ClientsNum)
+	gopy.Client = gopy.ImportModule("fl", "client")
+	gopy.LF = gopy.GetFunc(gopy.Client, "LF")
+	gopy.BF = gopy.GetFunc(gopy.Client, "BF")
+	gopy.Worker = gopy.GetFunc(gopy.Client, "Worker")
 
-	task := run.NewTask(model, unlabel, size, globalParam)
+	//FL clients generation
+	attack := "LF" // define the attack type
+	attackers, workers, test_data, unlabel, model, size, comp_size, globalParam, momentum := client.CreateClients(attack)
+
+	task := run.NewTask(model, unlabel, size, comp_size, globalParam, momentum, client.Rank, client.Beta, client.Slr)
 	run.TaskPublish(task, bcNet)
 
 	//nodes get task info from network
@@ -77,7 +91,6 @@ func main() {
 	}
 
 	state := python3.PyEval_SaveThread()
-
 	for r := 0; r < client.Round; r++ {
 		fmt.Println("----------------------------------------------------------------------------------")
 		//committee constitution
@@ -93,7 +106,7 @@ func main() {
 
 		//block prepare (candidate block generation)
 		//FL clients local training
-		run.ProcessFL(clients, r, nodes, conn)
+		run.ProcessFL(workers, attackers, r, nodes, conn)
 		for {
 			run.ProcessBlockPre(nodes, r, conn)
 			if bcNet.BlockReceived {
@@ -103,7 +116,7 @@ func main() {
 
 		//achieve consensus, vote
 		for {
-			run.ProcessBlock(bcNet, nodes, test_data, conn)
+			run.ProcessBlock(bcNet, nodes, test_data, conn, writer)
 			if bcNet.NewBlock {
 				break
 			}
@@ -114,7 +127,8 @@ func main() {
 	}
 
 	run_time := time.Since(start_time)
-	fmt.Println("Run time for 200 nodes: ", run_time)
+	fmt.Println("Run time for 100 nodes: ", run_time)
 	python3.PyEval_RestoreThread(state)
 	python3.Py_Finalize()
+	writer.Flush()
 }

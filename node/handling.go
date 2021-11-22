@@ -24,9 +24,10 @@ func (n *Node) handleVote(rw *bufio.ReadWriter, Raddr net.Addr) {
 		return
 	}
 
-	globalParam, _ := n.GetGlobalParam(n.Task.TaskName)
+	globalParam, momentum, _ := n.GetGlobalParam(n.Task.TaskName)
 
-	if chain.ValidCandidateBlock(n.Blockchain.LastBlock(), data, globalParam, n.Task.ModelSize, n.Task.PartNum, n.Task.UnlabeledData, n.Task.Model) {
+	if chain.ValidCandidateBlock(n.Blockchain.LastBlock(), data, globalParam, momentum, n.Task.ModelSize, n.Task.CompModelSize,
+		n.Task.PartNum, n.Task.Rank, n.Task.Beta, n.Task.Slr, n.Task.UnlabeledData, n.Task.Model) {
 		msg := chain.BlockToByteWithoutSig(data)
 		sig, err := ecdsa.SignASN1(rand.Reader, n.Sig, msg)
 		if err != nil {

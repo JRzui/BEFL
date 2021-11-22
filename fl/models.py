@@ -164,58 +164,6 @@ class FLModel(torch.nn.Module):
             
         return err/n_batches, acc/n_batches
 
-
-
-class StackLRModel(FLModel):
-    """
-    A logistic regression model for use with the StackOverflow dataset. The 
-    StackOverflow task has multiple positive labels per sample, (multi-label 
-    classification) so model has sigmoid outputs and Binary Cross-Entropy loss 
-    per output. As the learning task is multi-label, recall is used for this 
-    model's performance metric (instead of top-1 accuracy).
-    """
-    
-    def __init__(self, device, top_k=5):
-        """
-        Return a new StackLRModel, parameters stored on device. The performance
-        measure of this model is Recall, calculated using the top_k outputs with 
-        the highest value per sample.
-        
-        Args:
-        - device:   {torch.device} where to place model
-        - top_k:    {int} the k outputs with highest outputs per sample   
-        """
-        super(StackLRModel, self).__init__(device)
-        self.out        = torch.nn.Linear(10000, 500).to(device)
-        self.loss_fn    = torch.nn.BCEWithLogitsLoss(reduction='mean')
-        self.top_k      = top_k
-    
-    def forward(self, x):
-        return self.out(x)
-        
-    def calc_acc(self, logits, y):
-        # calculate recall using the top_k highest outputs
-        with torch.no_grad():
-            # get index of top_k outputs with highest value
-            B      = logits.size()[0]
-            preds  = torch.sigmoid(logits)
-            idxs   = torch.sort(preds, dim=1, descending=True)[1][:,:self.top_k]
-            
-            # set the top_k highest outputs to 1, rest to 0
-            preds[:,:] = 0.0
-            preds[torch.arange(B),idxs.transpose(0,1)] = 1.0
-            
-            # total number of true positives
-            tp          = (y * preds).sum(dim=1, dtype=torch.float32)
-            # number of positive labels for the samples
-            n_targets   = y.sum(dim=1, dtype=torch.float32) + 1e-8
-
-            recall      = torch.mean(tp / n_targets).item()
-        
-        return recall
-
-
-
 class FEMNISTModel(FLModel):
     """
     A Convolutional (conv) model for use with the FEMNIST dataset, using 
@@ -262,141 +210,85 @@ class FEMNISTModel(FLModel):
     def calc_acc(self, logits, y):
         return (torch.argmax(logits, dim=1) == y).float().mean()
 
-
-
-class CIFAR100Model(FLModel):
+class CIFAR10Model(FLModel):
     """
-    A Convolutional (conv) model for use with the CIFAR100 dataset, using 
-    standard cross entropy loss. Model layers consist of:
-    - 3x3 conv, stride 1, 32 filters, ReLU
-    - 2x2 max pooling, stride 2
-    - 3x3 conv, stride 1, 64 filters, ReLU
-    - 2x2 max pooling, stride 2
-    - 512 neuron fully connected, ReLU
-    - 100 neuron softmax output
-    """
-    
-    def __init__(self, device):
-        """
-        Return a new CIFAR100Model, parameters stored on device.
-        
-        Args:
+    Return a new CIFAR10 model, using the ResNet model from paper
+    He et.al. "Deep Residual Learning for Image Recognition", using
+    standard cross entropy loss.
+
+    Args:
         - device:   {torch.device} where to place model
-        """
-        super(CIFAR100Model, self).__init__(device)
-        self.loss_fn    = torch.nn.CrossEntropyLoss(reduction='mean')
-        
-        self.conv1      = torch.nn.Conv2d(3, 32, 3, 1).to(device)
-        self.relu1      = torch.nn.ReLU().to(device)
-        self.pool1      = torch.nn.MaxPool2d(2, 2).to(device)
-        
-        self.conv2      = torch.nn.Conv2d(32, 64, 3, 1).to(device)
-        self.relu2      = torch.nn.ReLU().to(device)
-        self.pool2      = torch.nn.MaxPool2d(2, 2).to(device)     
-        
-        self.flat       = torch.nn.Flatten().to(device)
-        self.fc1        = torch.nn.Linear(2304, 512).to(device)
-        self.relu3      = torch.nn.ReLU().to(device)
-        
-        self.out        = torch.nn.Linear(512, 100).to(device)
-
-    def forward(self, x):
-        a = self.pool1(self.relu1(self.conv1(x)))
-        b = self.pool2(self.relu2(self.conv2(a)))
-        c = self.relu3(self.fc1(self.flat(b)))
-        
-        return self.out(c)
-        
-    def calc_acc(self, logits, y):
-        return (torch.argmax(logits, dim=1) == y).float().mean()
-
-
-class MNISTModel(FLModel):
-    """
-    A Convolutional (conv) model for use with the FEMNIST dataset, using
-    standard cross entropy loss. Model layers consist of:
-    - 3x3 conv, stride 1, 32 filters, ReLU
-    - 2x2 max pooling, stride 2
-    - 3x3 conv, stride 1, 64 filters, ReLU
-    - 2x2 max pooling, stride 2
-    - 512 neuron fully connected, ReLU
-    - 62 neuron softmax output
     """
 
     def __init__(self, device):
-        """
-        Return a new FEMNISTModel, parameters stored on device.
-
-        Args:
-        - device:   {torch.device} where to place model
-        """
-        super(MNISTModel, self).__init__(device)
+        super(CIFAR10Model, self).__init__(device)
         self.loss_fn = torch.nn.CrossEntropyLoss(reduction='mean')
 
-        self.conv1 = torch.nn.Conv2d(1, 10, 5, 1).to(device)
-        self.relu1 = torch.nn.ReLU().to(device)
-        self.pool1 = torch.nn.MaxPool2d(2, 2).to(device)
+        self.in_channels = 16
+        self.conv = conv3x3(3, 16).to(device)
+        self.bn = torch.nn.BatchNorm2d(16).to(device)
+        self.relu = torch.nn.ReLU(inplace=True).to(device)
+        self.layer1 = self.make_layer(ResidualBlock, 16, 2).to(device)
+        self.layer2 = self.make_layer(ResidualBlock, 32, 2, 2).to(device)
+        self.layer3 = self.make_layer(ResidualBlock, 64, 2, 2).to(device)
+        self.avg_pool = torch.nn.AvgPool2d(8).to(device)
+        self.fc = torch.nn.Linear(64, 10).to(device)
 
-        self.conv2 = torch.nn.Conv2d(10, 20, 5, 1).to(device)
-        self.relu2 = torch.nn.ReLU().to(device)
-        self.pool2 = torch.nn.MaxPool2d(2, 2).to(device)
-
-        self.flat = torch.nn.Flatten().to(device)
-        self.fc1 = torch.nn.Linear(320, 50).to(device)
-        self.relu3 = torch.nn.ReLU().to(device)
-
-        self.out = torch.nn.Linear(50, 10).to(device)
+    def make_layer(self, block, out_channels, blocks, stride=1):
+        downsample = None
+        if (stride != 1) or (self.in_channels != out_channels):
+            downsample = torch.nn.Sequential(
+                conv3x3(self.in_channels, out_channels, stride=stride),
+                torch.nn.BatchNorm2d(out_channels))
+        layers = []
+        layers.append(block(self.in_channels, out_channels, stride, downsample))
+        self.in_channels = out_channels
+        for i in range(1, blocks):
+            layers.append(block(out_channels, out_channels))
+        return torch.nn.Sequential(*layers)
 
     def forward(self, x):
-        a = self.pool1(self.relu1(self.conv1(x)))
-        b = self.pool2(self.relu2(self.conv2(a)))
-        c = self.relu3(self.fc1(self.flat(b)))
-
-        return self.out(c)
+        out = self.conv(x)
+        out = self.bn(out)
+        out = self.relu(out)
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.avg_pool(out)
+        out = out.view(out.size(0), -1)
+        out = self.fc(out)
+        return out
 
     def calc_acc(self, logits, y):
         return (torch.argmax(logits, dim=1) == y).float().mean()
 
-class ShakesModel(FLModel):
-    """
-    A Gated Recurrent Unit (GRU) model to be used with the Shakespeare dataset,
-    using stabdard cross entropy loss. Model layers consist of: 
-    - (79 to 8) embedding
-    - 128 neuron GRU
-    - 128 neuron GRU
-    - 79 neuron softmax output
-    """
-    
-    def __init__(self, device):
-        """
-        Return a new ShakesModel, parameters stored on device.
-        
-        Args:
-        - device:   {torch.device} where to place model
-        """
-        super(ShakesModel, self).__init__(device)
-        self.loss_fn    = torch.nn.CrossEntropyLoss(reduction='mean')
-        
-        # vocab size is 79
-        self.embed      = torch.nn.Embedding(79, 8).to(device)
-        
-        self.gru        = torch.nn.GRU( input_size=8,
-                                        hidden_size=128,
-                                        num_layers=2,
-                                        batch_first=True).to(device)
-        
-        self.out        = torch.nn.Linear(128, 79).to(device)
-        
-    def forward(self, x):
-        batch_size  = x.size(0)
-        a           = self.embed(x)
-        b, _        = self.gru(a)
-        
-        return self.out(b[:,-1,:])
-        
-    def calc_acc(self, logits, y):
-        return (torch.argmax(logits, dim=1) == y).float().mean()        
+def conv3x3(in_channels, out_channels, stride=1):
+    return torch.nn.Conv2d(in_channels, out_channels, kernel_size=3,
+                               stride=stride, padding=1, bias=False)
 
+# Residual block
+class ResidualBlock(torch.nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = conv3x3(in_channels, out_channels, stride)
+        self.bn1 = torch.nn.BatchNorm2d(out_channels)
+        self.relu = torch.nn.ReLU(inplace=True)
+        self.conv2 = conv3x3(out_channels, out_channels)
+        self.bn2 = torch.nn.BatchNorm2d(out_channels)
+        self.downsample = downsample
+
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        if self.downsample:
+            residual = self.downsample(x)
+        out += residual
+        out = self.relu(out)
+        return out
 
 
 class NumpyModel():

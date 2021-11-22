@@ -152,6 +152,14 @@ func PyTupleToInt(val *python3.PyObject) []int {
 	return vals
 }
 
+func PyListToInt(val *python3.PyObject) []int {
+	vals := make([]int, 0)
+	for i := 0; i < val.Length(); i++ {
+		vals = append(vals, PyToInt(python3.PyList_GetItem(val, i)))
+	}
+	return vals
+}
+
 func PyListTuple_Int(val *python3.PyObject) [][]int {
 	var Array [][]int
 	for i := 0; i < val.Length(); i++ {

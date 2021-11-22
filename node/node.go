@@ -72,14 +72,17 @@ func (n *Node) GetTxs(conn *rpc.Client) {
 	}
 }
 
-func (n *Node) GetGlobalParam(task string) ([][]float64, int) {
+func (n *Node) GetGlobalParam(task string) ([][]float64, [][]float64, int) {
 	var globalParam [][]float64
+	var momentum [][]float64
 
 	if n.Blockchain.LastBlock().Index == 0 {
 		globalParam = n.Task.GlobalParam
+		momentum = n.Task.Momentum
 	} else {
 		globalParam = n.Blockchain.LastBlock().Transactions[0].GlobalModel
+		momentum = n.Blockchain.LastBlock().Transactions[0].Momentum
 	}
 
-	return globalParam, int(n.Blockchain.LastBlock().Index)
+	return globalParam, momentum, int(n.Blockchain.LastBlock().Index)
 }

@@ -52,7 +52,7 @@ func CreateBlock(lastBlock Block, txs []Transaction) Block {
 	return block
 }
 
-func ValidCandidateBlock(lastBlock Block, candidateBlock Block, globalParam [][]float64, modelSize [][]int, PartNum int, unlabel *python3.PyObject, model *python3.PyObject) bool {
+func ValidCandidateBlock(lastBlock Block, candidateBlock Block, globalParam [][]float64, momentum [][]float64, modelSize [][]int, compSize []int, PartNum int, rank int, beta float64, slr float64, unlabel *python3.PyObject, model *python3.PyObject) bool {
 	//Check if the previous hash is correct
 	blockBytes := BlockToByteWithSig(lastBlock)
 	lastHash := ComputeHashForBlock(blockBytes)
@@ -65,7 +65,7 @@ func ValidCandidateBlock(lastBlock Block, candidateBlock Block, globalParam [][]
 
 	//Check if transactions contained in the block are valid
 	for _, tx := range candidateBlock.Transactions[0].Deltas {
-		if ValidLocalTx(tx, modelSize) == false {
+		if ValidLocalTx(tx, compSize) == false {
 			return false
 		}
 	}
@@ -89,11 +89,21 @@ func ValidCandidateBlock(lastBlock Block, candidateBlock Block, globalParam [][]
 		}
 	}
 
-	globalParamPy := gopy.Node_agg.CallFunctionObjArgs(deltas, gopy.ArgFromListArray_Float(globalParam), unlabel, model, gopy.ArgFromListArray_Int(modelSize))
+	globalParamPy := gopy.ArgFromListArray_Float(globalParam)
+	momentumPy := gopy.ArgFromListArray_Float(momentum)
+
+	res := gopy.Node_run.CallFunctionObjArgs(deltas, globalParamPy, momentumPy, gopy.ArgFromFloat(beta), gopy.ArgFromFloat(slr),
+		unlabel, model, gopy.ArgFromListArray_Int(modelSize), gopy.ArgFromInt(rank))
+	globalModel := python3.PyTuple_GetItem(res, 0)
+	momentumPy = python3.PyTuple_GetItem(res, 1)
+
 	//check if the aggregated global param is correct
 	candGlobal := candidateBlock.Transactions[0].GlobalModel
-	globalParam = gopy.PyListList_Float(globalParamPy) //global param in current training round
-	comp := reflect.DeepEqual(candGlobal, globalParam)
+	candMmt := candidateBlock.Transactions[0].Momentum
+	globalParam = gopy.PyListList_Float(globalModel) //global param in current training round
+	momentum = gopy.PyListList_Float(momentumPy)
+
+	comp := reflect.DeepEqual(candGlobal, globalParam) && reflect.DeepEqual(candMmt, momentum)
 
 	python3.PyGILState_Release(gstate)
 	log.Println("Released python lock.")
@@ -126,7 +136,7 @@ func ValidVerifiedBlock(lastBlock Block, verifiedBlock Block) bool {
 		}
 	}
 	if yesVoteNum <= 2/3*CommitteeSize {
-		log.Println("Insufficient committee aprovals.")
+		log.Println("Insufficient committee aprrovals.")
 		return false
 	}
 

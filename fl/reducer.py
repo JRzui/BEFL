@@ -5,20 +5,37 @@ import numpy as np
 
 
 class Reducer():
-    def __init__(self, rank=1, reuse=False):
+    def __init__(self, rank=1, reuse=True):
+        """
+        Implemented from paper  T. Vogels et.al. "PowerSGD: Practical low-rank gradient compression for distributed optimization"
+        Args:
+            - rank      {int} the rank of expected compressed matrix
+            - reuse     {bool} weather reuse the matrix q or not
+        """
         self.rank = rank
         self.reuse = reuse
         self.qs = []
 
     def compress(self, M, q):
+        """
+        Args:
+            - M     {np.ndarray} with 2D shape, the matrix waiting for compressing
+            - q     {np.ndarray} the Q matrix used for compressing
+        """
         p = np.matmul(M, q)  # Compute p
         p = orthogonalize(p)  # Orthogonalize p
         q = np.matmul(M.T, p)  # Compute q
 
         return p, q
 
-    def decompress(self, p, q, param):
-        return np.matmul(p, q.T).reshape(*param.shape)
+    def decompress(self, p, q, shape):
+        """
+        Args:
+            - p     {np.ndarray} the decomposed matrx 1
+            - p     {np.ndarray} the  decomposed matrix 2
+            - shape {tuple} the shape of the original matrix
+        """
+        return np.matmul(p, q.T).reshape(shape)
 
     def reduce(self, params):
         """
@@ -55,7 +72,8 @@ class Reducer():
                 qs.append(q) # update q
                 idx += 1
 
-                out = self.decompress(p, q, param)
+                shape = param.shape
+                out = self.decompress(p, q, shape)
                 errs.append(param - out)  # local error recording
 
         self.qs = qs

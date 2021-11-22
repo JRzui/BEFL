@@ -1,31 +1,10 @@
 import torch
 from fl.models import NumpyModel
+import numpy as np
 
 
-class FLClientOptimiser():
-    """
-    Used for Federated Averaging algorithms where the optimiser parameters
-    need to be retrieved at set.
-    """
 
-    def get_params_numpy(self):
-        """
-        Returns NumpyModel containing copies of current optimiser parameters.
-        """
-        raise NotImplementedError()
-
-    def set_params_numpy(self, params):
-        """
-        Set the optimizer parameters. Order of parameters in given NumpyModel
-        must be the same as the order returned by get_params_numpy().
-
-        Args:
-        - params: {NumpyModel} containing new parameters
-        """
-        raise NotImplementedError()
-
-
-class ClientSGD(torch.optim.SGD, FLClientOptimiser):
+class ClientSGD(torch.optim.SGD):
     """
     SGD on FL clients without momentum (hence ClientSGD has no parameters).
     """
@@ -50,56 +29,116 @@ class ClientSGD(torch.optim.SGD, FLClientOptimiser):
         pass
 
 
-class ClientAdam(torch.optim.Adam, FLClientOptimiser):
+class ClientSGDm(torch.optim.Optimizer):
     """
-    Adam on FL clients. This Adam inherits from the Pytorch Adam implementation,
-    so uses the dynamic learnign rate calculated using step, beta1, beta2.
+    SGD momentum on FL clients
     """
 
-    def __init__(self, params, lr=0.001, betas=(0.9, 0.999),
-                 eps=1e-07, weight_decay=0):
+    def __init__(self, params, lr, beta, device):
         """
-        Return a new ClientAdam optimizer.
+        Returns a new optimizer for use in mimelite Federated experiments.
 
         Args:
-        - params:       {list} of torch tensors as returned by model.paramters()
-        - lr            {float} initial learning rate to use
-        - betas:        {tuple} of two floats for beta1, beta2 hyperparameters
-        - eps:          {float} << 0, numerical stability constant
-        - weight_decay: {float} 0 <= wd < 1, L2 regularisation parameter
+        - params:   {list} of params from a pytorch model
+        - lr:       {float} learning rate
+        - beta:     {float} momentum value, 0 <= beta < 1.0
         """
-        super(ClientAdam, self).__init__(params, lr, betas, eps,
-                                         weight_decay, amsgrad=False)
+        defaults = dict(lr=lr, beta=beta)
+        super(ClientSGDm, self).__init__(params, defaults)
+        self.lr = lr
+        self.beta = beta
+        self.device = device
+        self._init_m()
+
+    def _init_m(self):
+        """
+        Initialise the momentum terms of the optimizer with zeros.
+        """
+        for group in self.param_groups:
+            for p in group['params']:
+                state = self.state[p]
+                state['m'] = torch.zeros_like(p,
+                                              device=self.device,
+                                              dtype=torch.float32)
+
+    def step(self, closure=None):
+        """
+        Perform one step of momentum-SGD. As per Karimireddy et al. (Table 2,
+        Appedix A), this optimizer does not update the momentum values at
+        each step. $\mathcal{U}$ step in paper.
+
+        Args:
+        - closure: {callable} see torch.optim documentation
+
+        Returns: {None, float} see torch.optim documentation
+        """
+        loss = None
+        if closure is not None:
+            loss = closure()
+
+        for group in self.param_groups:
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+
+                g = p.grad.data  # parameter gradient
+                m = self.state[p]['m']  # current momentum value
+
+                p.data.sub_(self.lr * (self.beta * m + (1 - self.beta) * g))
+
+        return loss
+
+    def update_moments(self, grads):
+        """
+        Update the momentum terms of the optimiser using the passed gradients,
+        as per the rule in Table 2, Appendix A of Karimireddy et al 2020.
+        $\mathcal{V}$ step in paper.
+
+        Args:
+        - grads: {NumpyModel} containing gradients to update with.
+        """
+        i = 0
+        for group in self.param_groups:
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+
+                m = self.state[p]['m']
+                # need to convert np.ndarray to torch.tensor
+                g = torch.tensor(grads[i],
+                                 dtype=torch.float32,
+                                 device=self.device)
+
+                self.state[p]['m'] = (self.beta * m) + ((1 - self.beta) * g)
+                i += 1
+
+    def set_params(self, moments):
+        i = 0
+        for group in self.param_groups:
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+
+                # need to convert np.ndarray to torch.tensor
+                m = torch.tensor(moments[i],
+                                 dtype=torch.float32,
+                                 device=self.device)
+
+                self.state[p]['m'] = m
+                i += 1
 
     def get_params_numpy(self):
         """
-        Returns a NumpyModel containing iteration step count, average gradient
-        and average squared gradient for each tensor in the tracked model.
-        Therefore returns NumpyModel with n*3 values, where n is the number of
-        parameters in the tracked model.
-
-        Returns: NumpyModel
+        Return momentum values of optimizer as a NumpyModel.
         """
         params = []
-        for key in self.state.keys():
-            params.append(self.state[key]['step'])
-            params.append(self.state[key]['exp_avg'].cpu().numpy())
-            params.append(self.state[key]['exp_avg_sq'].cpu().numpy())
+
+        for group in self.param_groups:
+            for p in group['params']:
+                if p.grad is None:  # ignore gradient-less variables
+                    continue
+
+                params.append(np.copy(self.state[p]['m'].cpu().data.numpy()))
 
         return NumpyModel(params)
 
-    def set_params_numpy(self, params):
-        """
-        Set the parameters of this Adam optimizer. Order of parameters in the
-        passed NumpyModel must be in the same order as those returned by
-        ClientAdam.get_params_numpy().
-
-        Args:
-        - params: {NumpyModel} new parameters to set
-        """
-        i = 0
-        for key in self.state.keys():
-            self.state[key]['step'] = params[i]
-            self.state[key]['exp_avg'].copy_(torch.tensor(params[i + 1]))
-            self.state[key]['exp_avg_sq'].copy_(torch.tensor(params[i + 2]))
-            i += 3
