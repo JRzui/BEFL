@@ -131,7 +131,29 @@ def node_run(client_grads, round_model, momentum, beta, slr, unlabeled_data, mod
     momentum = param_tolist(momentum)  
     return round_model, momentum
     
+def malicious_node_run(client_grads, round_model, momentum, beta, slr, unlabeled_data, model, shape, rank):
+    """
+    Malicious node incorrectly compute global model
+    Args:
+    - client_grads:     {list of list of list} the collected clients' updates
+    - round_model:      {list of list} the global model params in each round
+    - beta:             {float} the momentum update hyper parameter
+    - slr:              {float} the server side learning rate
+    - unlabeled_data:   {tensors} a fraction of test dataset without labels which is used to calculate MI
+    - model:            {FLModel} 
+
+    Returns:
+    - round_agg:        {list of list} the aggregated updated global params
+    - momentum:         {list of list} the momentum value of this aggregation round
+    """  
+    round_model = param_toNumpy(round_model, shape)
+    momentum = param_toNumpy(momentum, shape)
+    for i in range(len(round_model)):
+        round_model[i] = np.random.normal(0, 1, round_model[i].shape)
     
+    round_model = param_tolist(round_model)
+    momentum = param_tolist(momentum)  
+    return round_model, momentum
 
 def test(model, shape, round_model, test_data, test_B=64):
     """

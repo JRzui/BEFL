@@ -1,6 +1,8 @@
 package gopy
 
-import "github.com/DataDog/go-python3"
+import (
+	"github.com/DataDog/go-python3"
+)
 
 func ImportModule(pyFolder string, pyFile string) *python3.PyObject {
 	python3.PyRun_SimpleString("import sys\nsys.path.append(\"\")")
@@ -131,6 +133,7 @@ func PyListToFloat(val *python3.PyObject) []float64 {
 	for i := 0; i < val.Length(); i++ {
 		item := next.CallObject(nil)
 		newArray = append(newArray, PyToFloat(item))
+		item.DecRef()
 	}
 	return newArray
 }
@@ -141,6 +144,7 @@ func PyListList_Float(val *python3.PyObject) [][]float64 {
 		intreList := python3.PyList_GetItem(val, i)
 		newArray = append(newArray, PyListToFloat(intreList))
 	}
+	val.DecRef()
 	return newArray
 }
 

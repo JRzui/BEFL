@@ -1,12 +1,17 @@
 package run
 
 import (
+	"crypto/elliptic"
 	"encoding/csv"
+	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/rpc"
+	"os"
 	"reflect"
 	"runtime"
+	"time"
 
 	"github.com/DataDog/go-python3"
 	"github.com/JRzui/BCFedMI/chain"
@@ -19,14 +24,19 @@ import (
 
 //New FL task
 func NewTask(model *python3.PyObject, unlabel *python3.PyObject, size [][]int, comp_size []int, globalParam [][]float64, momentum [][]float64, rank int, beta float64, slr float64) network.TaskInfo {
-
+	globalModel := chain.Global{globalParam, momentum}
+	content, err := json.Marshal(globalModel)
+	if err != nil {
+		panic(err)
+	}
+	globalAddr := chain.UploadIPFS(content)
 	task := network.TaskInfo{
 		TaskName:      client.Task,
 		Model:         model,
-		GlobalParam:   globalParam,
-		Momentum:      momentum,
+		GlobalModel:   globalAddr,
 		ModelSize:     size,
 		CompModelSize: comp_size,
+		CurrentRound:  0,
 		Rank:          rank,
 		Beta:          beta,
 		Slr:           slr,
@@ -66,67 +76,86 @@ func NodesGetTask(nodes []*node.Node, bcnet *network.BlockchainNetwork) {
 }
 
 //Block preparation
-func ProcessBlockPre(nodes []*node.Node, round int, conn *rpc.Client) {
+func ProcessBlockPre(nodes []*node.Node, round int, conn *rpc.Client, bcnet *network.BlockchainNetwork) {
 	//candidate block generation
-	randIdxs := chain.RandomArray(len(nodes), 0, len(nodes))
-	for _, i := range randIdxs {
-		nodes[i].GetTxs(conn) //get pending transactions from network
+	idx := chain.Random(0, len(nodes))
+	if !nodes[idx].AmMember() {
+		nodes[idx].GetTxs(conn) //get pending transactions from network
 
 		//check if enough updates are collected
-		if len(nodes[i].Blockchain.Transactions.Keys()) >= client.M {
+		if len(nodes[idx].Blockchain.Transactions.Keys()) >= client.M {
 			//generate candidate block
-			fmt.Println("start generating candidate block")
+			fmt.Printf("Node %d start generating candidate block\n", idx)
 			deltas := make([]chain.LocalTransaction, 0)
-			for _, key := range nodes[i].Blockchain.Transactions.Keys() {
-				deltas = append(deltas, nodes[i].Blockchain.Transactions.Transactions[key])
+			for _, key := range nodes[idx].Blockchain.Transactions.Keys() {
+				deltas = append(deltas, nodes[idx].Blockchain.Transactions.Transactions[key])
 			}
 
-			globalParam, momentum, _ := nodes[i].GetGlobalParam(nodes[i].Task.TaskName)
-			tx := chain.CreateTx(client.Task, round, deltas, globalParam, momentum, nodes[i].Task.Beta, nodes[i].Task.Slr,
-				nodes[i].Task.Rank, nodes[i].Task.ModelSize, nodes[i].Task.UnlabeledData, nodes[i].Task.Model)
-			candBlock := chain.CreateBlock(nodes[i].Blockchain.LastBlock(), []chain.Transaction{tx})
+			globalAddr, round := nodes[idx].GetGlobalParam(nodes[idx].Task.TaskName) //get global model from node id
+			var global chain.Global
+			content := chain.DownloadIPFS(globalAddr) //download the global model from IPFS
+			json.Unmarshal(content, &global)
+			globalParam := global.GlobalModel
+			momentum := global.Momentum
+			var tx chain.Transaction
+			if nodes[idx].Malicious {
+				tx = chain.CreateTx_Malicious(nodes[idx].Sig, client.Task, round+1, deltas, globalParam, momentum, nodes[idx].Task.Beta, nodes[idx].Task.Slr,
+					nodes[idx].Task.Rank, nodes[idx].Task.ModelSize, nodes[idx].Task.UnlabeledData, nodes[idx].Task.Model)
+			} else {
+				tx = chain.CreateTx(nodes[idx].Sig, client.Task, round+1, deltas, globalParam, momentum, nodes[idx].Task.Beta, nodes[idx].Task.Slr,
+					nodes[idx].Task.Rank, nodes[idx].Task.ModelSize, nodes[idx].Task.UnlabeledData, nodes[idx].Task.Model)
+			}
+			candBlock := chain.CreateBlock(nodes[idx].Blockchain.LastBlock(), []chain.Transaction{tx})
 			//send candidate block to the network
 			var sent bool
-			err := conn.Call("BlockchainNetwork.SendBlock", candBlock, &sent)
+			//panic: gob: type not registered for interface: elliptic.p256Curve
+			gob.Register(elliptic.P256())
+			err := conn.Call("BlockchainNetwork.SendBlock", network.Candidate{candBlock, nodes[idx].ID}, &sent)
 			if err != nil {
 				fmt.Println(err)
 			}
 			if sent {
 				fmt.Println("Candidate block generated and sent to verification")
-				log.Printf("Node %d sent candidate block to the network\n", nodes[i].ID)
+				log.Printf("Node %d sent candidate block to the network\n", nodes[idx].ID)
+			} else {
+				go func() { bcnet.CandidateWait <- true }()
 			}
-			break
+		} else {
+			go func() { bcnet.CandidateWait <- true }()
 		}
+	} else {
+		go func() { bcnet.CandidateWait <- true }()
 	}
 }
 
 //Constitute the committee
-func ProcessCommittee(nodes []*node.Node, conn *rpc.Client) {
-	for _, node := range nodes {
-		var committeeSetup bool
+func ProcessCommittee(nodes []*node.Node, conn *rpc.Client, bcnet *network.BlockchainNetwork) {
+	var committeeSetup bool
 
-		check, vrfV, vrfP := node.Vrf.GetRole(node.Blockchain.LastBlock())
+	fmt.Println("Committee constitution...")
+	randIdxs := chain.RandomArray(len(nodes), 0, len(nodes))
+	for _, id := range randIdxs {
+		check, vrfV, vrfP := nodes[id].Vrf.GetRole(nodes[id].ID, chain.CommitteeSize, bcnet.StakeMap, nodes[id].Blockchain.LastBlock())
 		if check {
 			member := chain.Member{
-				ID:       node.ID,
-				Address:  node.Address,
-				Pk:       node.Vrf.RolesPk,
+				ID:       nodes[id].ID,
+				Address:  nodes[id].Address,
+				Pk:       nodes[id].Vrf.RolesPk,
 				VrfValue: vrfV,
 				VrfProof: vrfP,
 			}
 			conn.Call("BlockchainNetwork.SendRole", member, &committeeSetup)
 		}
-
 		if committeeSetup {
 			log.Println("Committee setup.")
+			fmt.Println("Committee setup.")
 			break
 		}
-
 	}
 }
 
 //Update the committee info from the blockchain network
-func NodesCommitteeUpdate(nodes []*node.Node, conn *rpc.Client) {
+func NodesCommitteeUpdate(nodes []*node.Node, conn *rpc.Client, bcnet *network.BlockchainNetwork) {
 	for _, node := range nodes {
 		var members []chain.Member
 		conn.Call("BlockchainNetwork.CommitteeUpdate", node.ID, &members)
@@ -138,41 +167,73 @@ func NodesCommitteeUpdate(nodes []*node.Node, conn *rpc.Client) {
 }
 
 //Achieve the consensus via byzantine fault tolerance
-func ProcessBlock(bcnet *network.BlockchainNetwork, nodes []*node.Node, testData *python3.PyObject, conn *rpc.Client, w *csv.Writer) {
-	bcnet.VoteLock.Lock()
-	//the voting part
-	for _, candidate := range bcnet.CandidateBlock {
-		block := consensus.Vote(candidate, bcnet.Members)
+func ProcessBlock(bcnet *network.BlockchainNetwork, nodes []*node.Node, testData *python3.PyObject, conn *rpc.Client) {
+	execute := make(chan bool)
+	go func() {
+		execute <- true
+	}()
+	select {
+	case <-execute:
+		bcnet.VoteLock.Lock()
+		candidate := <-bcnet.CandidateBlock
+		fmt.Println("Voting start")
+		//the voting part
+		members := make([]chain.Member, 0)
+		for _, member := range bcnet.Members.Members {
+			members = append(members, member)
+		}
+		block := consensus.Vote(candidate, members)
 		if reflect.DeepEqual(block, chain.Block{}) {
+			fmt.Println("Failed to achieve consensus on the candidate block")
 			log.Println("Candidate block is not valid, move to next candidate block validation.")
+			go func() { bcnet.CandidateWait <- true }()
+			bcnet.VoteLock.Unlock()
+			return
 		} else {
 			bcnet.VerifiedBlock = block
-			bcnet.NewBlock = true
-			bcnet.Members = nil        // clear current committee, waiting for the next round committee constitution
-			bcnet.Transactions = nil   // clear pending transactions in the current training round
-			bcnet.CandidateBlock = nil // clear candidate block pool
-			bcnet.BlockReceived = false
-			bcnet.CommitteeSetup = false
+			go func() { bcnet.NewBlock <- true }()
+			network.RewardsDistribution(bcnet) // distribute rewards to committee members and block creator
 			log.Println("New block generated.")
 
 			//model test
-			globalModel := gopy.ArgFromListArray_Float(bcnet.VerifiedBlock.Transactions[0].GlobalModel)
+			var global chain.Global
+			content := chain.DownloadIPFS(bcnet.VerifiedBlock.Transactions[0].GlobalModel) //download the global model from IPFS
+			json.Unmarshal(content, &global)
+			globalModel := gopy.ArgFromListArray_Float(global.GlobalModel)
 			acc := Test(bcnet.Task.Model, globalModel, testData, bcnet.Task.ModelSize)
-			w.Write([]string{fmt.Sprintf("%v", acc)})
+
+			f, err := os.OpenFile(fmt.Sprintf("results/%s_%s.csv", client.Task, client.Attack), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			if err != nil {
+				panic(err)
+			}
+			writer := csv.NewWriter(f)
+			writer.Write([]string{fmt.Sprintf("%v", acc)})
+			writer.Flush()
+			f.Close()
+
 			fmt.Println("New block generated, Test accuracy: ", acc)
-			break
+			bcnet.VoteLock.Unlock()
+
 		}
+	case <-time.After(chain.VotingTimeout):
+		fmt.Println("Voting time out")
+		bcnet.Members = chain.NewMemberSet() // clear current committee, waiting for the next round committee constitution
+		go func() { bcnet.CommitteeWait <- true }()
+		bcnet.VoteLock.Unlock()
 	}
-	bcnet.VoteLock.Unlock()
 }
 
-func ProcessNextRound(nodes []*node.Node, conn *rpc.Client) {
+func ProcessNextRound(bcnet *network.BlockchainNetwork, nodes []*node.Node, conn *rpc.Client, round *int) {
+	bcnet.Members = chain.NewMemberSet() // clear current committee, waiting for the next round committee constitution
+	bcnet.Transactions = nil             // clear pending transactions in the current training round
+	*round++
+
+	var newBlock chain.Block
 	for _, node := range nodes {
-		var newBlock chain.Block
 		conn.Call("BlockchainNetwork.GetBlock", node.ID, &newBlock)
 		check := chain.ValidVerifiedBlock(node.Blockchain.LastBlock(), newBlock)
 		if check {
-			node.Blockchain.AddBlock(newBlock)
+			node.Blockchain.AddBlock(newBlock, node.ID)
 			log.Printf("Node %d: new block added\n", node.ID)
 			node.Blockchain.CommitteeClear()                 //clear this round committee info, wait for next round
 			node.Blockchain.Transactions = chain.NewTxPool() //clear transaction pool for current training round
@@ -180,6 +241,10 @@ func ProcessNextRound(nodes []*node.Node, conn *rpc.Client) {
 			log.Printf("Node %d: the new block published is not valid\n", node.ID)
 		}
 	}
+
+	go func() { bcnet.CommitteeWait <- true }()
+	go func() { bcnet.NewRound <- true }()
+	go func() { bcnet.CandidateWait <- true }()
 }
 
 func ProcessFL(workers []*client.Client, attackers []*client.Client, round int, nodes []*node.Node, conn *rpc.Client) {
@@ -190,13 +255,13 @@ func ProcessFL(workers []*client.Client, attackers []*client.Client, round int, 
 	for _, attacker := range attackers {
 		round_model, global_r := attacker.GetGlobalModel(nodes)
 		attacker.Attack(round_model, global_r, client.K, client.B)
-		attacker.SendUpdates(nodes, round, conn)
+		attacker.SendUpdates(nodes, global_r, conn)
 	}
 
 	for _, idx := range idxs {
 		round_model, global_r := workers[idx].GetGlobalModel(nodes)
 		workers[idx].Train(round_model, global_r, client.K, client.B)
-		workers[idx].SendUpdates(nodes, round, conn)
+		workers[idx].SendUpdates(nodes, global_r, conn)
 	}
 	fmt.Println("FL clients one round training complete.")
 }
@@ -224,7 +289,23 @@ func Test(model *python3.PyObject, globalModel *python3.PyObject, testData *pyth
 	accPy := gopy.Test.CallFunctionObjArgs(model, gopy.ArgFromListArray_Int(model_size), globalModel, testData)
 	acc := gopy.PyToFloat(accPy)
 
+	accPy.DecRef()
 	python3.PyGILState_Release(gstate)
 	log.Println("Released python lock.")
 	return acc
+}
+
+func SaveStakeMap(nodes []*node.Node, stakemap map[int]int) {
+	f, err := os.OpenFile("results/stake.csv", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		panic(err)
+	}
+	writer := csv.NewWriter(f)
+	stakes := make([]string, 0)
+	for _, node := range nodes {
+		stakes = append(stakes, fmt.Sprintf("%v", stakemap[node.ID]))
+	}
+	writer.Write(stakes)
+	writer.Flush()
+	f.Close()
 }

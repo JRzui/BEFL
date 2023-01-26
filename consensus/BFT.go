@@ -47,7 +47,7 @@ func Vote(candidate chain.Block, members []chain.Member) chain.Block {
 			}
 		}
 	}
-	if yesVote >= chain.CommitteeSize*2/3 {
+	if yesVote > chain.CommitteeSize*2/3 {
 		candidate.Signatures = signatures
 		candidate.Transactions[0].Deltas = nil //clear the redundant local model updates
 		return candidate

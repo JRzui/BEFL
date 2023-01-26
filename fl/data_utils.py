@@ -261,7 +261,7 @@ def load_cifar10(num_users, n_class, n_samples, rate_unbalance):
     - n_samples:        {int{ the number of samples per class distributed to clients
     - rate_unbalance:   {float} unbalance rate of cifar10 data, (0-1) 1 denotes balanced
     """
-    data_dir = './data/CIFAR10_data/'
+    data_dir = '../data/CIFAR10_data/'
     apply_transform = transforms.Compose(
         [transforms.ToTensor(),
          transforms.Pad(4),

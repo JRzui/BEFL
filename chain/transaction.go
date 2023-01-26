@@ -1,6 +1,10 @@
 package chain
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -13,17 +17,24 @@ import (
 
 /* Custom transaction*/
 type Transaction struct {
-	Task        string             `json:"task"`
-	Round       int                `json:"round"`
-	GlobalModel [][]float64        `json:"globalModel"`
-	Momentum    [][]float64        `json:"momentum"`
-	Deltas      []LocalTransaction `json:"modelUpdates"` //the deltas will be removed when the confirmed block generated
+	Task           string             `json:"task"`
+	Round          int                `json:"round"`
+	GlobalModel    string             `json:"globalModel"`      //the IPFS address of the global model
+	GlobalModelSig Signature          `json:"SenderSignauture"` //the signature of uploaded global
+	Deltas         []LocalTransaction `json:"modelUpdates"`     //the deltas will be removed when the confirmed block generated
+}
+
+type Global struct {
+	GlobalModel [][]float64 `json:"roundModel"`
+	Momentum    [][]float64 `json:"momentum"`
 }
 
 type LocalTransaction struct {
-	ClientID    int         `json:"clientID"`
-	Round       int         `json:"round"`
-	ModelUpdate [][]float64 `json:"modelUpdate"`
+	ClientID    int           `json:"clientID"`
+	PublicKey   rsa.PublicKey `json:"publicKey"`
+	Round       int           `json:"round"`
+	ModelUpdate [][]float64   `json:"modelUpdate"`
+	Signature   []byte        `json:"signature"`
 }
 
 type TransactionPool struct {
@@ -52,7 +63,7 @@ func (txp *TransactionPool) Keys() []string {
 	return keys
 }
 
-func CreateTx(task string, round int, txs []LocalTransaction, globalParam [][]float64, momentum [][]float64, beta float64, slr float64, rank int, model_size [][]int, unlabel *python3.PyObject, model *python3.PyObject) Transaction {
+func CreateTx(priKey *ecdsa.PrivateKey, task string, round int, txs []LocalTransaction, globalParam [][]float64, momentum [][]float64, beta float64, slr float64, rank int, model_size [][]int, unlabel *python3.PyObject, model *python3.PyObject) Transaction {
 	log.Println("Acquring python lock...")
 	runtime.LockOSThread()
 	gstate := python3.PyGILState_Ensure()
@@ -67,19 +78,96 @@ func CreateTx(task string, round int, txs []LocalTransaction, globalParam [][]fl
 
 	globalParamPy := gopy.ArgFromListArray_Float(globalParam)
 	momentumPy := gopy.ArgFromListArray_Float(momentum)
+	betaPy := gopy.ArgFromFloat(beta)
+	slrPy := gopy.ArgFromFloat(slr)
+	modelSizePy := gopy.ArgFromListArray_Int(model_size)
+	rankPy := gopy.ArgFromInt(rank)
 
-	res := gopy.Node_run.CallFunctionObjArgs(deltas, globalParamPy, momentumPy, gopy.ArgFromFloat(beta), gopy.ArgFromFloat(slr),
-		unlabel, model, gopy.ArgFromListArray_Int(model_size), gopy.ArgFromInt(rank))
-	globalModel := python3.PyTuple_GetItem(res, 0)
-	momentumPy = python3.PyTuple_GetItem(res, 1)
+	res := gopy.Node_run.CallFunctionObjArgs(deltas, globalParamPy, momentumPy, betaPy, slrPy, unlabel, model, modelSizePy, rankPy)
+	globalParamPy_ := python3.PyTuple_GetItem(res, 0)
+	momentumPy_ := python3.PyTuple_GetItem(res, 1)
+	globalModel := Global{gopy.PyListList_Float(globalParamPy_), gopy.PyListList_Float(momentumPy_)}
+	content, err := json.Marshal(globalModel)
+	if err != nil {
+		panic(err)
+	}
+	globalAddr := UploadIPFS(content)
+	sig, err := ecdsa.SignASN1(rand.Reader, priKey, []byte(globalAddr))
+	if err != nil {
+		panic("cannot sign the global model")
+	}
 	tx := Transaction{
-		Task:        task,
-		Round:       round,
-		GlobalModel: gopy.PyListList_Float(globalModel),
-		Momentum:    gopy.PyListList_Float(momentumPy),
-		Deltas:      txs,
+		Task:           task,
+		Round:          round,
+		GlobalModel:    globalAddr,
+		GlobalModelSig: Signature{sig, priKey.PublicKey},
+		Deltas:         txs,
 	}
 
+	//release memory
+	res.DecRef()
+	deltas.DecRef()
+	globalParamPy.DecRef()
+	momentumPy.DecRef()
+	betaPy.DecRef()
+	slrPy.DecRef()
+	modelSizePy.DecRef()
+	rankPy.DecRef()
+	python3.PyGILState_Release(gstate)
+	log.Println("Released python lock.")
+	return tx
+}
+
+func CreateTx_Malicious(priKey *ecdsa.PrivateKey, task string, round int, txs []LocalTransaction, globalParam [][]float64, momentum [][]float64, beta float64, slr float64, rank int, model_size [][]int, unlabel *python3.PyObject, model *python3.PyObject) Transaction {
+	log.Println("Acquring python lock...")
+	runtime.LockOSThread()
+	gstate := python3.PyGILState_Ensure()
+	deltas := python3.PyList_New(len(txs))
+	for i, tx := range txs {
+		res := python3.PyList_SetItem(deltas, i, gopy.ArgFromListArray_Float(tx.ModelUpdate))
+		if res != 0 {
+			log.Println("Arg client_grads pyList error")
+			return Transaction{}
+		}
+	}
+
+	globalParamPy := gopy.ArgFromListArray_Float(globalParam)
+	momentumPy := gopy.ArgFromListArray_Float(momentum)
+	betaPy := gopy.ArgFromFloat(beta)
+	slrPy := gopy.ArgFromFloat(slr)
+	modelSizePy := gopy.ArgFromListArray_Int(model_size)
+	rankPy := gopy.ArgFromInt(rank)
+
+	res := gopy.Malicious_node_run.CallFunctionObjArgs(deltas, globalParamPy, momentumPy, betaPy, slrPy, unlabel, model, modelSizePy, rankPy)
+	globalParamPy_ := python3.PyTuple_GetItem(res, 0)
+	momentumPy_ := python3.PyTuple_GetItem(res, 1)
+	globalModel := Global{gopy.PyListList_Float(globalParamPy_), gopy.PyListList_Float(momentumPy_)}
+	content, err := json.Marshal(globalModel)
+	if err != nil {
+		panic(err)
+	}
+	globalAddr := UploadIPFS(content)
+	sig, err := ecdsa.SignASN1(rand.Reader, priKey, []byte(globalAddr))
+	if err != nil {
+		panic("cannot sign the global model")
+	}
+	tx := Transaction{
+		Task:           task,
+		Round:          round,
+		GlobalModel:    globalAddr,
+		GlobalModelSig: Signature{sig, priKey.PublicKey},
+		Deltas:         txs,
+	}
+
+	//release memory
+	res.DecRef()
+	deltas.DecRef()
+	globalParamPy.DecRef()
+	momentumPy.DecRef()
+	betaPy.DecRef()
+	slrPy.DecRef()
+	modelSizePy.DecRef()
+	rankPy.DecRef()
 	python3.PyGILState_Release(gstate)
 	log.Println("Released python lock.")
 	return tx
@@ -108,14 +196,29 @@ func LocalTxHash(tx LocalTransaction) string {
 }
 
 func ValidLocalTx(tx LocalTransaction, modelSize []int) bool {
+	//check if the modelUpdate is issued by the client
+	msg, err := json.Marshal(tx.ModelUpdate)
+	if err != nil {
+		log.Println("Error encoding modelUpdate to bytes")
+		return false
+	}
+	hash := sha256.Sum256(msg)
+	err = rsa.VerifyPKCS1v15(&tx.PublicKey, crypto.SHA256, hash[:], tx.Signature)
+	if err != nil {
+		log.Println("Incorrect verification")
+		return false
+	}
+
 	//check if the shape of the local model updates is in line with the model
 	if len(tx.ModelUpdate) != len(modelSize) {
+		log.Println("Incorrect model length")
 		return false
 	}
 
 	for i := 0; i < len(modelSize); i++ {
 		//check the parameter number in each layer
 		if modelSize[i] != len(tx.ModelUpdate[i]) {
+			log.Printf("Incorrect model size in layer %d", i)
 			return false
 		}
 	}

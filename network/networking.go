@@ -94,7 +94,7 @@ func (e *Endpoint) handleMessages(conn net.Conn) {
 		e.m.Unlock()
 		if !ok {
 			log.Println("Command '" + cmd + "' is not registered.")
-			//return
+			return
 		}
 		address := conn.RemoteAddr()
 		handleCommand(rw, address)

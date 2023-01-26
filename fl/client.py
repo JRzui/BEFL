@@ -86,7 +86,7 @@ class BF(Attacker, Worker):
     def __init__(self,data_feeder, model, optimizer):
         super(BF, self).__init__(data_feeder, model, optimizer)
 
-    def attack(self, model, round_model, K, B):
+    def attack(self, round_model, K, B):
         # perform normal local training
         self.train_step(round_model, K, B)
 

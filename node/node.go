@@ -13,24 +13,28 @@ import (
 )
 
 type Node struct {
-	ID         int
-	Vrf        consensus.VRF
-	Sig        *ecdsa.PrivateKey
-	Address    string
-	Blockchain *chain.Blockchain
-	Task       network.TaskInfo
+	ID              int
+	Vrf             consensus.VRF
+	Sig             *ecdsa.PrivateKey
+	Address         string
+	Blockchain      *chain.Blockchain
+	Task            network.TaskInfo
+	CommitteeMember bool
+	Malicious       bool
 }
 
-func CreateNode(id int, addr string) *Node {
+func CreateNode(id int, addr string, malicious bool) *Node {
 	vrf := consensus.VRF{}
 	vrf.Init()
 	sig, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	node := &Node{
-		ID:         id,
-		Vrf:        vrf,
-		Sig:        sig,
-		Address:    addr,
-		Blockchain: chain.NewBlockchain(),
+		ID:              id,
+		Vrf:             vrf,
+		Sig:             sig,
+		Address:         addr,
+		Blockchain:      chain.NewBlockchain(), //since the large memory cost of maintaing the chain, we maintain a single blockchain in the simulation
+		CommitteeMember: false,
+		Malicious:       malicious,
 	}
 	return node
 }
@@ -72,17 +76,22 @@ func (n *Node) GetTxs(conn *rpc.Client) {
 	}
 }
 
-func (n *Node) GetGlobalParam(task string) ([][]float64, [][]float64, int) {
-	var globalParam [][]float64
-	var momentum [][]float64
+func (n *Node) GetGlobalParam(task string) (string, int) {
+	var global string
+	var round int
 
 	if n.Blockchain.LastBlock().Index == 0 {
-		globalParam = n.Task.GlobalParam
-		momentum = n.Task.Momentum
+		global = n.Task.GlobalModel
+		round = 0
 	} else {
-		globalParam = n.Blockchain.LastBlock().Transactions[0].GlobalModel
-		momentum = n.Blockchain.LastBlock().Transactions[0].Momentum
+		global = n.Blockchain.LastBlock().Transactions[0].GlobalModel
+		round = int(n.Blockchain.LastBlock().Transactions[0].Round)
 	}
 
-	return globalParam, momentum, int(n.Blockchain.LastBlock().Index)
+	return global, round
+}
+
+func (n *Node) AmMember() bool {
+	_, found := n.Blockchain.Committee.Set[n.ID]
+	return found
 }

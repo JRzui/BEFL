@@ -1,6 +1,8 @@
 package chain
 
-import "reflect"
+import (
+	"reflect"
+)
 
 type Blockchain struct {
 	Chain        []Block         `json:"chain"`        // linear chain structure
@@ -38,8 +40,13 @@ func (bc *Blockchain) GetLength() int {
 }
 
 //Add block to the chain
-func (bc *Blockchain) AddBlock(block Block) {
-	bc.Chain = append(bc.Chain, block)
+func (bc *Blockchain) AddBlock(block Block, id int) {
+	//fix the out of memory issue
+	if bc.LastBlock().Index < block.Index {
+		SaveBlock(id, bc.LastBlock())
+
+		bc.Chain[len(bc.Chain)-1] = block
+	}
 }
 
 //Receive transaction and put it into the local transaction pool

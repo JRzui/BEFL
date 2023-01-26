@@ -1,6 +1,12 @@
 package client
 
 import (
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/rpc"
 	"reflect"
@@ -14,7 +20,9 @@ import (
 
 //FL client
 type Client struct {
-	ID                int               //the id of client
+	ID                int //the id of client
+	PublicKey         rsa.PublicKey
+	privateKey        *rsa.PrivateKey
 	role              *python3.PyObject //FL task model
 	model_size        [][]int
 	Round             int //the current training round
@@ -53,9 +61,15 @@ func CreateClients(attack string) ([]*Client, []*Client, *python3.PyObject, *pyt
 		for i := 0; i < num_adver; i++ {
 			adver_feeder := python3.PyList_GetItem(dataFeeders, i)
 			lf_attacker := gopy.LF.CallFunctionObjArgs(model, optimizer, adver_feeder, gopy.ArgFromString(Task))
+			priKey, err := rsa.GenerateKey(rand.Reader, 2048)
+			if err != nil {
+				panic(err)
+			}
 			worker := &Client{
 				ID:         i,
 				role:       lf_attacker,
+				PublicKey:  priKey.PublicKey,
+				privateKey: priKey,
 				model_size: model_size,
 				Round:      0,
 			}
@@ -65,15 +79,24 @@ func CreateClients(attack string) ([]*Client, []*Client, *python3.PyObject, *pyt
 		//BF attacker initializatopm
 		for i := 0; i < num_adver; i++ {
 			adver_feeder := python3.PyList_GetItem(dataFeeders, i)
-			bf_attacker := gopy.BF.CallFunctionObjArgs(model, optimizer, adver_feeder)
+			bf_attacker := gopy.BF.CallFunctionObjArgs(adver_feeder, model, optimizer)
+			priKey, err := rsa.GenerateKey(rand.Reader, 2048)
+			if err != nil {
+				panic(err)
+			}
 			worker := &Client{
 				ID:         i,
 				role:       bf_attacker,
+				PublicKey:  priKey.PublicKey,
+				privateKey: priKey,
 				model_size: model_size,
 				Round:      0,
 			}
 			attackers = append(attackers, worker)
 		}
+	case "None":
+		//no attackers
+		num_adver = 0
 	default:
 		panic("Incorrect attack type")
 	}
@@ -81,10 +104,16 @@ func CreateClients(attack string) ([]*Client, []*Client, *python3.PyObject, *pyt
 	honests := make([]*Client, 0)
 	for i := num_adver; i < ClientsNum; i++ {
 		dataFeeder := python3.PyList_GetItem(dataFeeders, i)
-		woker := gopy.Worker.CallFunctionObjArgs(dataFeeder, model, optimizer)
+		worker := gopy.Worker.CallFunctionObjArgs(dataFeeder, model, optimizer)
+		priKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			panic(err)
+		}
 		honest := &Client{
 			ID:         i,
-			role:       woker,
+			role:       worker,
+			PublicKey:  priKey.PublicKey,
+			privateKey: priKey,
 			model_size: model_size,
 			Round:      0,
 		}
@@ -109,10 +138,20 @@ func (c *Client) Train(global_model [][]float64, global_r int, K int, B int) {
 	gstate := python3.PyGILState_Ensure()
 
 	round_model := gopy.ArgFromListArray_Float(global_model)
-	deltaPy := gopy.Honest_run.CallFunctionObjArgs(c.role, round_model, gopy.ArgFromListArray_Int(c.model_size), gopy.ArgFromInt(Rank), gopy.ArgFromInt(K), gopy.ArgFromInt(B))
+	model_size := gopy.ArgFromListArray_Int(c.model_size)
+	rank := gopy.ArgFromInt(Rank)
+	k := gopy.ArgFromInt(K)
+	b := gopy.ArgFromInt(B)
+	deltaPy := gopy.Honest_run.CallFunctionObjArgs(c.role, round_model, model_size, rank, k, b)
 	c.LocalModelUpdates = gopy.PyListList_Float(deltaPy)
 	c.Round = global_r + 1 //wait for the next round training
 
+	deltaPy.DecRef()
+	round_model.DecRef()
+	model_size.DecRef()
+	rank.DecRef()
+	k.DecRef()
+	b.DecRef()
 	python3.PyGILState_Release(gstate)
 	log.Println("Released python lock.")
 }
@@ -130,22 +169,34 @@ func (c *Client) Attack(global_model [][]float64, global_r int, K int, B int) {
 	gstate := python3.PyGILState_Ensure()
 
 	round_model := gopy.ArgFromListArray_Float(global_model)
-	deltaPy := gopy.Attacker_run.CallFunctionObjArgs(c.role, round_model, gopy.ArgFromListArray_Int(c.model_size), gopy.ArgFromInt(Rank), gopy.ArgFromInt(K), gopy.ArgFromInt(B))
+	model_size := gopy.ArgFromListArray_Int(c.model_size)
+	rank := gopy.ArgFromInt(Rank)
+	k := gopy.ArgFromInt(K)
+	b := gopy.ArgFromInt(B)
+	deltaPy := gopy.Attacker_run.CallFunctionObjArgs(c.role, round_model, model_size, rank, k, b)
 	c.LocalModelUpdates = gopy.PyListList_Float(deltaPy)
 	c.Round = global_r + 1 //wait for the next round training
 
+	deltaPy.DecRef()
+	round_model.DecRef()
+	model_size.DecRef()
+	rank.DecRef()
+	k.DecRef()
+	b.DecRef()
 	python3.PyGILState_Release(gstate)
 	log.Println("Released python lock.")
 }
 
 /*Client 'send' updates to a randomly choosed edge node*/
 func (c *Client) SendUpdates(nodes []*node.Node, round int, conn *rpc.Client) {
-	delta := chain.LocalTransaction{c.ID, c.Round, c.LocalModelUpdates}
+	sig := c.Sign(c.LocalModelUpdates)
+	tx := chain.LocalTransaction{c.ID, c.PublicKey, c.Round, c.LocalModelUpdates, sig}
 
 	id := chain.Random(0, len(nodes)) //pick random nodes
-	tx := delta
+
 	//node id performs tx validation check
-	if chain.ValidLocalTx(tx, nodes[id].Task.CompModelSize) {
+	check := chain.ValidLocalTx(tx, nodes[id].Task.CompModelSize)
+	if check {
 		nodes[id].Blockchain.AddTransaction(tx)
 		nodes[id].SendTx(tx, conn)
 	}
@@ -156,15 +207,39 @@ func (c *Client) SendUpdates(nodes []*node.Node, round int, conn *rpc.Client) {
 func (c *Client) GetGlobalModel(nodes []*node.Node) ([][]float64, int) {
 	id := chain.Random(0, len(nodes)) //pick random node
 
-	globalModel, _, round := nodes[id].GetGlobalParam(nodes[id].Task.TaskName) //get global model from node id
+	globalAddr, round := nodes[id].GetGlobalParam(nodes[id].Task.TaskName) //get global model from node id
+	var global chain.Global
+	content := chain.DownloadIPFS(globalAddr) //download the global model from IPFS
+	json.Unmarshal(content, &global)
+	globalModel := global.GlobalModel
 	for {
 		//check if the global model is updated and is not null
 		if round >= c.Round && (!reflect.DeepEqual(globalModel, [][]float64{})) {
 			break
 		}
-		id = chain.Random(0, len(nodes)) //pick random nodes
-		globalModel, _, round = nodes[id].GetGlobalParam(nodes[id].Task.TaskName)
+		id = chain.Random(0, len(nodes))                                      //pick random nodes
+		globalAddr, round = nodes[id].GetGlobalParam(nodes[id].Task.TaskName) //get global model from node id
+		var global chain.Global
+		content := chain.DownloadIPFS(globalAddr) //download the global model from IPFS
+		json.Unmarshal(content, &global)
+		globalModel = global.GlobalModel
 	}
 
 	return globalModel, round
+}
+
+func (c *Client) Sign(modelUpdate [][]float64) []byte {
+	msg, err := json.Marshal(modelUpdate)
+	if err != nil {
+		log.Println("Error encoding modelUpdate to bytes")
+		return nil
+	}
+	hash := sha256.Sum256(msg)
+	sig, err := rsa.SignPKCS1v15(rand.Reader, c.privateKey, crypto.SHA256, hash[:])
+	if err != nil {
+		fmt.Println(err)
+		log.Println(fmt.Sprintf("client %d cannot sign msg\n", c.ID))
+		return nil
+	}
+	return sig
 }

@@ -57,15 +57,23 @@ func ValidCandidateBlock(lastBlock Block, candidateBlock Block, globalParam [][]
 	blockBytes := BlockToByteWithSig(lastBlock)
 	lastHash := ComputeHashForBlock(blockBytes)
 	if fmt.Sprintf("%x", lastHash) != candidateBlock.PrevBlockHash {
+		log.Println("Incorrect previous hash")
 		return false
 	}
 	if candidateBlock.Index != lastBlock.Index+1 {
 		return false
 	}
 
+	//Check if the IPFS address contained in the transaction is correct
+	if !ecdsa.VerifyASN1(&candidateBlock.Transactions[0].GlobalModelSig.Pk, []byte(candidateBlock.Transactions[0].GlobalModel), candidateBlock.Transactions[0].GlobalModelSig.Sig) {
+		log.Println("Incorrect signature of IPFS address")
+		return false
+	}
+
 	//Check if transactions contained in the block are valid
 	for _, tx := range candidateBlock.Transactions[0].Deltas {
 		if ValidLocalTx(tx, compSize) == false {
+			log.Println("Incorrect wrapped pending transactions")
 			return false
 		}
 	}
@@ -73,6 +81,7 @@ func ValidCandidateBlock(lastBlock Block, candidateBlock Block, globalParam [][]
 	//check if enough updates are collected
 	updates_num := len(candidateBlock.Transactions[0].Deltas)
 	if updates_num < PartNum {
+		log.Println("Not enough model updates for aggregation")
 		return false
 	}
 
@@ -81,7 +90,6 @@ func ValidCandidateBlock(lastBlock Block, candidateBlock Block, globalParam [][]
 	runtime.LockOSThread()
 	gstate := python3.PyGILState_Ensure() //prevent python stick
 	deltas := python3.PyList_New(updates_num)
-
 	for i, tx := range candidateBlock.Transactions[0].Deltas {
 		res := python3.PyList_SetItem(deltas, i, gopy.ArgFromListArray_Float(tx.ModelUpdate))
 		if res != 0 {
@@ -91,23 +99,39 @@ func ValidCandidateBlock(lastBlock Block, candidateBlock Block, globalParam [][]
 
 	globalParamPy := gopy.ArgFromListArray_Float(globalParam)
 	momentumPy := gopy.ArgFromListArray_Float(momentum)
-
-	res := gopy.Node_run.CallFunctionObjArgs(deltas, globalParamPy, momentumPy, gopy.ArgFromFloat(beta), gopy.ArgFromFloat(slr),
-		unlabel, model, gopy.ArgFromListArray_Int(modelSize), gopy.ArgFromInt(rank))
-	globalModel := python3.PyTuple_GetItem(res, 0)
-	momentumPy = python3.PyTuple_GetItem(res, 1)
+	betaPy := gopy.ArgFromFloat(beta)
+	slrPy := gopy.ArgFromFloat(slr)
+	modelSizePy := gopy.ArgFromListArray_Int(modelSize)
+	rankPy := gopy.ArgFromInt(rank)
+	res := gopy.Node_run.CallFunctionObjArgs(deltas, globalParamPy, momentumPy, betaPy, slrPy, unlabel, model, modelSizePy, rankPy)
+	globalParamPy_ := python3.PyTuple_GetItem(res, 0)
+	momentumPy_ := python3.PyTuple_GetItem(res, 1)
 
 	//check if the aggregated global param is correct
-	candGlobal := candidateBlock.Transactions[0].GlobalModel
-	candMmt := candidateBlock.Transactions[0].Momentum
-	globalParam = gopy.PyListList_Float(globalModel) //global param in current training round
-	momentum = gopy.PyListList_Float(momentumPy)
+	var global Global
+	content := DownloadIPFS(candidateBlock.Transactions[0].GlobalModel) //download the global model from IPFS
+	json.Unmarshal(content, &global)
+	candGlobal := global.GlobalModel
+	candMmt := global.Momentum
+	globalParam = gopy.PyListList_Float(globalParamPy_) //global param in current training round
+	momentum = gopy.PyListList_Float(momentumPy_)
 
 	comp := reflect.DeepEqual(candGlobal, globalParam) && reflect.DeepEqual(candMmt, momentum)
+	if !comp {
+		log.Println("Incorrect aggregation")
+	}
 
+	//release memory
+	res.DecRef()
+	deltas.DecRef()
+	globalParamPy.DecRef()
+	momentumPy.DecRef()
+	betaPy.DecRef()
+	slrPy.DecRef()
+	modelSizePy.DecRef()
+	rankPy.DecRef()
 	python3.PyGILState_Release(gstate)
 	log.Println("Released python lock.")
-	//runtime.UnlockOSThread()
 	return comp
 }
 
