@@ -18,24 +18,11 @@ import (
 	"github.com/JRzui/BEFL/network"
 	"github.com/JRzui/BEFL/node"
 	"github.com/JRzui/BEFL/run"
-	"github.com/pkg/errors"
 )
 
 func main() {
-	path := "log"
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		err := os.Mkdir(path, os.ModePerm)
-		if err != nil {
-			log.Println(err)
-		}
-	}
-	path := "results"
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		err := os.Mkdir(path, os.ModePerm)
-		if err != nil {
-			log.Println(err)
-		}
-	}
+	_ = os.Mkdir("log", os.ModePerm)
+	_ = os.Mkdir("results", os.ModePerm)
 
 	file, _ := os.OpenFile("log/log.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	log.SetOutput(file)
