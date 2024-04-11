@@ -211,6 +211,8 @@ func ValidLocalTx(tx LocalTransaction, modelSize []int) bool {
 
 	//check if the shape of the local model updates is in line with the model
 	if len(tx.ModelUpdate) != len(modelSize) {
+		log.Println(len(tx.ModelUpdate))
+		log.Println(len(modelSize))
 		log.Println("Incorrect model length")
 		return false
 	}

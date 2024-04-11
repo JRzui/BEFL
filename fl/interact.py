@@ -174,7 +174,6 @@ def test(model, shape, round_model, test_data, test_B=64):
 
 def comp_param_toNumpy(params, shape, ndims, rank):
     """
-    Decompress model update and trasfer it to the Numpy model
     Args:
     - params:       {list of list} the list version of model parameters
     - shape:        {list of tuples} the parameter shape in each layer
@@ -262,7 +261,7 @@ def model_size(model):
 
 def comp_size(model, rank):
     """
-    Get compressed model size
+    Get model size
     Args:
     - model:        {FLModel} that will perform the learning
 

@@ -166,7 +166,7 @@ func NodesCommitteeUpdate(nodes []*node.Node, conn *rpc.Client, bcnet *network.B
 	}
 }
 
-//Achieve the consensus
+//Achieve the consensus via byzantine fault tolerance
 func ProcessBlock(bcnet *network.BlockchainNetwork, nodes []*node.Node, testData *python3.PyObject, conn *rpc.Client) {
 	execute := make(chan bool)
 	go func() {
