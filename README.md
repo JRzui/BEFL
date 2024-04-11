@@ -4,9 +4,9 @@ This repository contains the code of our paper, <a href="https://ieeexplore.ieee
 ## Environment
 The golang environment (Go 1.16). The release of the Go 1.16 can be found <a href="https://go.dev/dl/">here</a>, and the installation instruction can be found <a href="https://go.dev/doc/install">here</a>.
 <br>
-Python 3.7 is required for the go-python library <a href="https://github.com/DataDog/go-python3"> go-python3</a>
+Python 3.7 is required for the go-python library <a href="https://github.com/DataDog/go-python3"> go-python3</a>.
 <br>
-IPFS 0.19.0. Instruction for IPFS installation can be found at <a href="https://docs.ipfs.tech/install/command-line/#system-requirements">https://docs.ipfs.tech/install/command-line/#system-requirements</a><br>
+IPFS 0.19.0. Instruction for IPFS installation can be found at <a href="https://docs.ipfs.tech/install/command-line/#system-requirements">https://docs.ipfs.tech/install/command-line/#system-requirements</a>.<br><br>
 <b>Packge requirement</b>
 | Package     | Version |
 |-------------|---------|
@@ -14,6 +14,7 @@ IPFS 0.19.0. Instruction for IPFS installation can be found at <a href="https://
 | numpy       | 1.18.1  |
 | scipy       | 1.4.1   |
 | torchvision | 0.8.2   |
+
 The reuqired go packages will be automatically downloaded when run the experiment.
 
 
