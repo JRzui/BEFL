@@ -10,7 +10,7 @@ import (
 	"log"
 	"net"
 
-	"github.com/JRzui/BCFedMI/chain"
+	"github.com/JRzui/BEFL/chain"
 )
 
 func (n *Node) handleVote(rw *bufio.ReadWriter, Raddr net.Addr) {

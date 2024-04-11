@@ -2,7 +2,7 @@ package client
 
 var (
 	Task       = "cifar"
-	Attack     = "None" //laber flipping attack
+	Attack     = "None" //"None", "LF", "BF"
 	K          = 5      //local training step
 	B          = 64     //batch size
 	Beta       = 0.9

@@ -14,12 +14,12 @@ import (
 	"time"
 
 	"github.com/DataDog/go-python3"
-	"github.com/JRzui/BCFedMI/chain"
-	"github.com/JRzui/BCFedMI/client"
-	"github.com/JRzui/BCFedMI/consensus"
-	"github.com/JRzui/BCFedMI/gopy"
-	"github.com/JRzui/BCFedMI/network"
-	"github.com/JRzui/BCFedMI/node"
+	"github.com/JRzui/BEFL/chain"
+	"github.com/JRzui/BEFL/client"
+	"github.com/JRzui/BEFL/consensus"
+	"github.com/JRzui/BEFL/gopy"
+	"github.com/JRzui/BEFL/network"
+	"github.com/JRzui/BEFL/node"
 )
 
 //New FL task
@@ -166,7 +166,7 @@ func NodesCommitteeUpdate(nodes []*node.Node, conn *rpc.Client, bcnet *network.B
 	}
 }
 
-//Achieve the consensus via byzantine fault tolerance
+//Achieve the consensus
 func ProcessBlock(bcnet *network.BlockchainNetwork, nodes []*node.Node, testData *python3.PyObject, conn *rpc.Client) {
 	execute := make(chan bool)
 	go func() {

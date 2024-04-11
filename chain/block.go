@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/DataDog/go-python3"
-	"github.com/JRzui/BCFedMI/gopy"
+	"github.com/JRzui/BEFL/gopy"
 )
 
 /*Custom block structure*/

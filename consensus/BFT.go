@@ -8,7 +8,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/JRzui/BCFedMI/chain"
+	"github.com/JRzui/BEFL/chain"
 )
 
 func Vote(candidate chain.Block, members []chain.Member) chain.Block {

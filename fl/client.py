@@ -56,10 +56,7 @@ class LF(Attacker, Worker):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         data_feeder.activate()
         x, y = data_feeder.all_x_data, data_feeder.all_y_data
-        if dset_name == "mnist":
-            poison_x = x.cpu().numpy()
-            poison_y = 9 - y.cpu().numpy()
-        elif dset_name == "femnist":
+        if dset_name == "femnist":
             poison_x = x.cpu().numpy()
             poison_y = 61 - y.cpu().numpy()
         elif dset_name == "cifar":

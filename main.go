@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/DataDog/go-python3"
-	"github.com/JRzui/BCFedMI/chain"
-	"github.com/JRzui/BCFedMI/client"
-	"github.com/JRzui/BCFedMI/gopy"
-	"github.com/JRzui/BCFedMI/network"
-	"github.com/JRzui/BCFedMI/node"
-	"github.com/JRzui/BCFedMI/run"
+	"github.com/JRzui/BEFL/chain"
+	"github.com/JRzui/BEFL/client"
+	"github.com/JRzui/BEFL/gopy"
+	"github.com/JRzui/BEFL/network"
+	"github.com/JRzui/BEFL/node"
+	"github.com/JRzui/BEFL/run"
 )
 
 func main() {

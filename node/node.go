@@ -7,9 +7,9 @@ import (
 	"log"
 	"net/rpc"
 
-	"github.com/JRzui/BCFedMI/chain"
-	"github.com/JRzui/BCFedMI/consensus"
-	"github.com/JRzui/BCFedMI/network"
+	"github.com/JRzui/BEFL/chain"
+	"github.com/JRzui/BEFL/consensus"
+	"github.com/JRzui/BEFL/network"
 )
 
 type Node struct {

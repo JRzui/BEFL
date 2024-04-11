@@ -1,4 +1,4 @@
-module github.com/JRzui/BCFedMI
+module github.com/JRzui/BEFL
 
 go 1.16
 

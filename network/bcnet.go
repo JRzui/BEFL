@@ -6,8 +6,8 @@ import (
 	"sync"
 
 	"github.com/DataDog/go-python3"
-	"github.com/JRzui/BCFedMI/chain"
-	"github.com/JRzui/BCFedMI/consensus"
+	"github.com/JRzui/BEFL/chain"
+	"github.com/JRzui/BEFL/consensus"
 	"github.com/coniks-sys/coniks-go/crypto/vrf"
 	"github.com/pkg/errors"
 )

@@ -13,9 +13,9 @@ import (
 	"runtime"
 
 	"github.com/DataDog/go-python3"
-	"github.com/JRzui/BCFedMI/chain"
-	"github.com/JRzui/BCFedMI/gopy"
-	"github.com/JRzui/BCFedMI/node"
+	"github.com/JRzui/BEFL/chain"
+	"github.com/JRzui/BEFL/gopy"
+	"github.com/JRzui/BEFL/node"
 )
 
 //FL client

@@ -5,13 +5,10 @@ and retrieving a stream of data batches from it. Also has some data utility
 functions.
 """
 import torch
-import pickle
 import numpy as np
 import os
 import json
-import h5py
 import scipy.sparse
-import idx2numpy
 from torchvision import datasets, transforms
 
     

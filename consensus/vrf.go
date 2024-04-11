@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/JRzui/BCFedMI/chain"
+	"github.com/JRzui/BEFL/chain"
 	"github.com/coniks-sys/coniks-go/crypto/vrf"
 )
 
