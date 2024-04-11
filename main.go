@@ -18,6 +18,7 @@ import (
 	"github.com/JRzui/BEFL/network"
 	"github.com/JRzui/BEFL/node"
 	"github.com/JRzui/BEFL/run"
+	"github.com/pkg/errors"
 )
 
 func main() {
