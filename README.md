@@ -27,7 +27,7 @@ The reuqired go packages will be automatically downloaded when run the experimen
 The hyperpearemeters about the blockchain are set in ```chain/variables.go```。 ```client/variables_FL.go``` contains the set hyperparameters for the FL task.
 
 ## Project running
-First start the IPFS by running ```IPFS deamon```, then
+First start the IPFS by running ```ipfs deamon```, then
 ```
 go run main.go
 ```
