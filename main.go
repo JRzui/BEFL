@@ -21,8 +21,19 @@ import (
 )
 
 func main() {
-	_ = os.Mkdir("log", os.ModePerm)
-	_ = os.Mkdir("results", os.ModePerm)
+	log_dir := "log"
+    if err := createDirIfNotExist(log_dir); err != nil {
+        fmt.Println(err)
+    } else {
+        fmt.Println("Directory created or already exists:", log_dir)
+    }
+	result_dir := "results"
+    if err := createDirIfNotExist(result_dir); err != nil {
+        fmt.Println(err)
+    } else {
+        fmt.Println("Directory created or already exists:", result_dir)
+    }
+
 
 	file, _ := os.OpenFile("log/log.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	log.SetOutput(file)
@@ -157,7 +168,7 @@ func main() {
 		}
 	}
 	round_time := time.Since(Start)
-	
+
 	f, err := os.OpenFile("results/time.csv", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		panic(err)
@@ -172,4 +183,13 @@ func main() {
 	f.Close()
 
 	python3.Py_Finalize()
+}
+
+func createDirIfNotExist(dir string) error {
+    // Use os.Stat to check if the directory exists
+    if _, err := os.Stat(dir); os.IsNotExist(err) {
+        // Use os.MkdirAll to create the directory and any necessary parents
+        return os.MkdirAll(dir, 0755) // Change the permissions as needed
+    }
+    return nil // If the directory already exists or the function succeeds
 }

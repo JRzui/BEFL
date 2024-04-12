@@ -110,6 +110,7 @@ class MI(ServerAgg):
         avg_mi = np.mean(mutual_mi, axis=1)
         return avg_mi
 
+class Bicotti(ServerAgg):
     def __init__(self, global_model, beta, slr):
         """
         Average the clients' grads
